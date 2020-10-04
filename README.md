@@ -1,7 +1,7 @@
 <h1 align="center">
-  <img src="https://github.com/akenny430/lamar_reu_2019/blob/master/misc/img/3D_lasso_contour.png" width="300px" height="300px" />
-  <img src="https://github.com/akenny430/lamar_reu_2019/blob/master/misc/img/3D_glasso_contour.png" width="300px" height="300px" />
-    <img src="https://github.com/akenny430/lamar_reu_2019/blob/master/misc/img/cluster.png" width="300px" height="300px" />
+  <img src="https://github.com/akenny430/lamar_reu_2019/blob/master/misc/img/3D_lasso_contour.png" width="250px" height="250px" />
+  <img src="https://github.com/akenny430/lamar_reu_2019/blob/master/misc/img/3D_glasso_contour.png" width="250px" height="250px" />
+    <img src="https://github.com/akenny430/lamar_reu_2019/blob/master/misc/img/cluster.png" width="250px" height="250px" />
 </h1>
 
 # Lamar University REU -- Summer 2019

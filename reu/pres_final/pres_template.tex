@@ -1,0 +1,135 @@
+\PassOptionsToPackage{usenames,dvipsnames,table,x11names}{xcolor}
+\documentclass[8pt]{beamer}
+
+% SETTING THEMES ----------------------------------------
+%\usetheme{Warsaw}
+\usetheme{Luebeck}
+%\usetheme{Boadilla}
+
+% COLORS IN PRESENTATION --------------------------------
+\setbeamercolor*{palette primary}{bg = Firebrick1, fg = white}
+
+
+%https://www.tug.org/pracjourn/2007-4/walden/color.pdf
+%https://tex.stackexchange.com/questions/368784/change-color-in-beamer-theme
+
+% FONT --------------------------------------------------
+%\usefonttheme{professionalfonts} %doesn't do anything?
+\usefonttheme{serif}
+
+% CHANGING ITEMIZE ITEMS --------------------------------
+\setbeamertemplate{itemize item}{\color{black} $\vcenter{\hbox{\tiny$\bullet$}}$} %style of item
+\setbeamertemplate{itemize subitem}{\tiny \color{black}$\blacktriangleright$} %style for sub item
+\setbeamercolor{itemize item}{fg=black} %changes color of all items
+
+% changing around enumerate items
+\setbeamertemplate{enumerate items}[default] %default number style
+\setbeamercolor{enumerate item}{fg=black}
+
+%getting rid of stuff on bottom
+\setbeamertemplate{footline}[frame number]{}
+\setbeamertemplate{navigation symbols}{}
+%\setbeamertemplate{footline}{%
+%    \raisebox{5pt}{\makebox[\paperwidth]{\hfill\makebox[20pt]{\color{gray}
+%          \scriptsize\insertframenumber/\inserttotalframenumber}}}\hspace*{5pt}}
+
+% making bibliography entries have black text
+%\usepackage{natbib}
+%\renewcommand\bibfont{\scriptsize}
+\setbeamercolor*{bibliography entry title}{fg=black}
+\setbeamercolor*{bibliography entry author}{fg=black}
+\setbeamercolor*{bibliography entry location}{fg=black}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%------------------------------------------------------
+%                Math Packages
+%------------------------------------------------------
+
+%\usepackage[intlimits]{amsmath}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+%\everymath{\displaystyle}
+\usepackage{siunitx} % for SI units (e.g. C, degree)
+\usepackage{bm} % bold for some math symbols
+\usepackage{nicefrac} % for nicer fractions sometimes
+\usepackage[thinc]{esdiff} % for derivatives
+
+%------------------------------------------------------
+%                Formatting
+%------------------------------------------------------
+
+% COLORS ----------------------------------------------
+%\usepackage[dvipsnames, table]{xcolor}
+\usepackage{xcolor}
+
+% FIGURES ---------------------------------------------
+\usepackage{graphicx} % for importing images
+\usepackage{subcaption} % for making subfigures
+\usepackage[labelfont=bf, font = it]{caption} % changing style of figures
+% use font=it for italic font
+
+% PAGE LAYOUT -----------------------------------------
+%\linespread{1.3} % changes line spacing
+\setlength{\parskip}{0.75em}
+
+%\usepackage{indentfirst}
+%\usepackage{parskip} % for not indenting paragraphs first
+\usepackage{multirow} % having multiple rows
+\usepackage{multicol} % having multiple columns
+\usepackage[T1]{fontenc} % can combine \sc and \bf font
+
+% LANGUAGES -------------------------------------------
+\usepackage[english]{babel} % for correctly using english
+\usepackage[utf8x]{inputenc} % compiling correctly
+\usepackage{CJK} % using Chinese, Japanese, and Korean
+
+% MISC ------------------------------------------------
+\usepackage[normalem]{ulem} % for \sout
+\usepackage{tikzsymbols} % for emojis
+\usepackage{booktabs,eqparbox} % for tables
+\usepackage{verbatim} % for verbatim environment
+%\usepackage{xmpmulti} % for animations
+\usepackage{media9} % for animations
+
+% CITING ----------------------------------------------
+\usepackage{apacite}
+\newcommand{\citeay}[1]{\citeauthor{#1} \citeyear{#1}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\title{MAIN TITLE}
+\author{SUBTITLE}
+\institute{\includegraphics[]{lamar_logo.jpeg}}
+\date{NAME \\[0.5pt]
+Lamar University \\[0.5pt]
+DATE}
+    
+\begin{document}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%% TITLE FRAME %%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+
+\maketitle
+
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%% FRAME 1 %%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}{TITLE HERE}
+
+Here is some text blah blah
+    
+\end{frame}
+
+\end{document}

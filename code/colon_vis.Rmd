@@ -1,0 +1,780 @@
+---
+title: "Code for Colon Data Set Visuals"
+author: "\\emph{Aiden Kenny}"
+date: "\\emph{Summer 2019}"
+fontsize: 11pt
+geometry: margin = 0.75in
+output: pdf_document
+header-includes:
+- \usepackage[usenames,dvipsnames,table]{xcolor}
+- \usepackage{amsmath}
+- \usepackage{amssymb}
+- \usepackage{siunitx}
+- \usepackage{textcomp}
+- \usepackage{pgfplots}
+- \pgfplotsset{compat=1.15}
+- \usepackage{tikzsymbols}
+- \usepackage{amssymb}
+- \usepackage{bm}
+- \usepackage[T1]{fontenc}
+- \usepackage[english]{babel}
+---
+
+
+```{r setup, include = TRUE, message = FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+
+# colors
+library(viridis)
+vir_pal = function(n){
+  viridis(n, alpha = 1)
+}
+inf_pal = function(n){
+  inferno(n, alpha = 1)
+}
+# 2: original color blind palettes
+cb_pal = c("#E69F00", "#56B4E9", "#009E73", "#CC79A7", "#F0E442", "#0072B2", 
+               "#D55E00", "#999999", "#000000")
+# 3: changing opacity of cb_pal
+cb_as_rgb = col2rgb(cb_pal)
+# 25%
+cb_pal_25 = rep(NA, length(cb_pal))
+for(i in 1:length(cb_pal)){
+  cb_pal_25[i] = rgb(cb_as_rgb[1, i]/255, cb_as_rgb[2, i]/255, cb_as_rgb[3, i]/255, 0.25)
+}
+# 50%
+cb_pal_50 = rep(NA, length(cb_pal))
+for(i in 1:length(cb_pal)){
+  cb_pal_50[i] = rgb(cb_as_rgb[1, i]/255, cb_as_rgb[2, i]/255, cb_as_rgb[3, i]/255, 0.5)
+}
+
+# regularization packages
+library(glmnet)
+library(grpreg)
+library(SGL)
+library(pcLasso)
+
+# clustering
+library(cluster)
+
+# ROC curves
+library(pROC)
+
+# making LaTex table
+library(xtable)
+```
+
+# Reading in the colon data and results
+
+```{r data sets}
+#setwd("C:/Users/akenn/Desktop/Code/R_Code/LU_REU/Code/data_colon") # for laptop
+#setwd("C:/Users/akenn/Desktop/Code/R_Code/LU_REU/Code/data_leuk") # for laptop
+setwd("C:/Users/reu_akenny/Desktop/Code/R_Code/LU_REU/Code") # for LAMAR computer
+#setwd("C:/Users/reu_akenny/Desktop/LU_REU/Code") # for nicer LAMAR computer
+
+data = read.csv("colon_data_cleaned.csv", header = TRUE)
+data$yn = ifelse(data$yn == -1, 0, 1)
+#leuk = read.csv("leuk_data_cleaned.csv", header = TRUE)
+
+info = read.csv("colon_best.csv", header = TRUE)
+#info = read.csv("leuk_best.csv", header = TRUE)
+par = info[, 3]
+auc = signif(info[, 10], digits = 3)
+```
+
+# Training and test set
+
+```{r training and test set}
+set.seed(1)
+train = sort(sample(1:nrow(data), nrow(data)/2))
+test = (1:nrow(data))[-train]
+```
+
+# Clustering
+
+```{r clustering}
+x = as.data.frame(t(data[, -ncol(data)]))
+
+# k means groups
+opt = 9
+set.seed(1)
+groupsk = as.numeric(kmeans(x, centers = opt, nstart = 20)$cluster)
+
+# hclustering
+nch = 7
+dd = as.dist(1 - cor(t(x)))
+hclust_comp = hclust(dd, method = "complete")
+groupsh = as.numeric(cutree(hclust_comp, nch))
+```
+
+# ROC plots
+
+## Fitting each of the models
+
+### Lasso
+
+```{r lasso ROC}
+x = model.matrix(yn ~ ., data = data)[,-1]
+y = data$yn
+
+set.seed(1)
+cv_out = cv.glmnet(x[train,], as.factor(y[train]), alpha = 1, family = "binomial", 
+                   standardize = TRUE, type.measure = "deviance")
+lasso_prob = predict(cv_out, s = "lambda.min", newx = x[test,], type = "response")
+act = ifelse(y[test] == 0, "0", "1")
+lasso_ROC_n = roc(response = act, predictor = as.vector(lasso_prob), plot = FALSE, smooth = FALSE)
+lasso_ROC_s = roc(response = act, predictor = as.vector(lasso_prob), plot = FALSE, smooth = TRUE)
+```
+
+### Elastic net
+
+```{r elastic net ROC}
+x = model.matrix(yn ~ ., data = data)[,-1]
+y = data$yn
+
+set.seed(1)
+cv_out = cv.glmnet(x[train,], as.factor(y[train]), alpha = par[2], family = "binomial", 
+                   standardize = TRUE, type.measure = "deviance")
+enet_prob = predict(cv_out, s = "lambda.min", newx = x[test,], type = "response")
+act = ifelse(y[test] == 0, "0", "1")
+enet_ROC_n = roc(response = act, predictor = as.vector(enet_prob), plot = FALSE, smooth = FALSE)
+enet_ROC_s = roc(response = act, predictor = as.vector(enet_prob), plot = FALSE, smooth = TRUE)
+```
+
+### pcLasso no
+
+```{r pcLasso no ROC}
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+set.seed(1)
+cv_out = cv.pcLasso(x[train, ], y[train], ratio = par[3], family = "binomial", 
+                    standardize = FALSE)
+pcl_prob = predict(cv_out, xnew = x[test,], s = "lambda.min")
+act = ifelse(y[test] == 0, "0", "1")
+pcl_ROC_n = roc(response = act, predictor = pcl_prob, plot = FALSE, smooth = FALSE)
+pcl_ROC_s = roc(response = act, predictor = pcl_prob, plot = FALSE, smooth = TRUE)
+```
+
+### gLasso k
+
+```{r gl k ROC}
+groups = groupsk
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+set.seed(1)
+cv_out = cv.grpreg(X = x[train, ], y = y[train], group = groups, family = "binomial",
+                   penalty = "grLasso", alpha = 1)
+glask_prob = predict(cv_out, lambda = cv_out$lambda.min, X = x[test, ], 
+                     type = "response")
+act = ifelse(y[test] == 0, "0", "1")
+glask_ROC_n = roc(response = act, predictor = as.vector(glask_prob), plot = FALSE, smooth = FALSE)
+glask_ROC_s = roc(response = act, predictor = as.vector(glask_prob), plot = FALSE, smooth = TRUE)
+```
+
+### sgLasso k
+
+```{r sgl k ROC}
+groups = groupsk
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+info = list(x = x[train, ], y = y[train])
+
+set.seed(1)
+cv_out = cvSGL(data = info, index = groups, type = "logit", alpha = par[5], nlam = 100)
+lam_seq = cv_out$lambdas
+index = which.min(cv_out$lldiff)
+sglk_mod = SGL(data = info, index = groups, type = "logit", alpha = par[5], nlam = 100, lambdas = lam_seq)
+sglk_prob = predictSGL(sglk_mod, newX = x[test, ], lam = index)
+sglk_ROC_n = roc(response = act, predictor = as.vector(sglk_prob), plot = FALSE, smooth = FALSE)
+sglk_ROC_s = roc(response = act, predictor = as.vector(sglk_prob), plot = FALSE, smooth = TRUE)
+```
+
+### cMCP k
+
+```{r cmcp k ROC}
+groups = groupsk
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+set.seed(1)
+cv_out = cv.grpreg(X = x[train, ], y = y[train], group = groups, family = "binomial",
+                   penalty = "cMCP", alpha = 1, gamma = par[6])
+cmcpk_prob = predict(cv_out, lambda = cv_out$lambda.min, X = x[test, ], 
+                     type = "response")
+act = ifelse(y[test] == 0, "0", "1")
+cmcpk_ROC_n = roc(response = act, predictor = as.vector(cmcpk_prob), plot = FALSE, smooth = FALSE)
+cmcpk_ROC_s = roc(response = act, predictor = as.vector(cmcpk_prob), plot = FALSE, smooth = TRUE)
+```
+
+### pcLasso k 
+
+```{r pcLasso k ROC}
+group_num = groupsk
+group_dat = data.frame(x = seq(1, (ncol(data) - 1), 1), y = group_num)
+groups = list()
+for(i in 1:tail(sort(unique(group_num)), 1)){
+  groups[[i]] = group_dat[group_dat$y == i, 1]
+}
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+
+set.seed(1)
+cv_out = cv.pcLasso(x[train, ], y[train], groups = groups, ratio = par[7], 
+                    family = "binomial")
+pclk_prob = predict(cv_out, xnew = x[test,], s = "lambda.min")
+act = ifelse(y[test] == 0, "0", "1")
+pclk_ROC_n = roc(response = act, predictor = as.vector(pclk_prob), plot = FALSE, smooth = FALSE)
+pclk_ROC_s = roc(response = act, predictor = as.vector(pclk_prob), plot = FALSE, smooth = TRUE)
+```
+
+### gLasso h
+
+```{r gl h ROC}
+groups = groupsh
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+set.seed(1)
+cv_out = cv.grpreg(X = x[train, ], y = y[train], group = groups, family = "binomial",
+                   penalty = "grLasso", alpha = 1)
+glash_prob = predict(cv_out, lambda = cv_out$lambda.min, X = x[test, ], 
+                     type = "response")
+act = ifelse(y[test] == 0, "0", "1")
+glash_ROC_n = roc(response = act, predictor = as.vector(glash_prob), plot = FALSE, smooth = FALSE)
+glash_ROC_s = roc(response = act, predictor = as.vector(glash_prob), plot = FALSE, smooth = TRUE)
+```
+
+### sgLasso h
+
+```{r sgl h ROC}
+groups = groupsh
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+info = list(x = x[train, ], y = y[train])
+
+set.seed(1)
+cv_out = cvSGL(data = info, index = groups, type = "logit", alpha = par[9], nlam = 100)
+lam_seq = cv_out$lambdas
+index = which.min(cv_out$lldiff)
+sglh_mod = SGL(data = info, index = groups, type = "logit", alpha = par[9], nlam = 100, lambdas = lam_seq)
+sglh_prob = predictSGL(sglh_mod, newX = x[test, ], lam = index)
+sglh_ROC_n = roc(response = act, predictor = as.vector(sglh_prob), plot = FALSE, smooth = FALSE)
+sglh_ROC_s = roc(response = act, predictor = as.vector(sglh_prob), plot = FALSE, smooth = TRUE)
+```
+
+### cMCP h
+
+```{r cmcp h ROC}
+groups = groupsh
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+set.seed(1)
+cv_out = cv.grpreg(X = x[train, ], y = y[train], group = groups, family = "binomial",
+                   penalty = "cMCP", alpha = 1, gamma = par[10])
+cmcph_prob = predict(cv_out, lambda = cv_out$lambda.min, X = x[test, ], 
+                     type = "response")
+act = ifelse(y[test] == 0, "0", "1")
+cmcph_ROC_n = roc(response = act, predictor = as.vector(cmcph_prob), plot = FALSE, smooth = FALSE)
+cmcph_ROC_s = roc(response = act, predictor = as.vector(cmcph_prob), plot = FALSE, smooth = TRUE)
+```
+
+### pcLasso h
+
+```{r pcLasso h ROC}
+group_num = groupsh
+group_dat = data.frame(x = seq(1, (ncol(data) - 1), 1), y = group_num)
+groups = list()
+for(i in 1:tail(sort(unique(group_num)), 1)){
+  groups[[i]] = group_dat[group_dat$y == i, 1]
+}
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+
+set.seed(1)
+cv_out = cv.pcLasso(x[train, ], y[train], groups = groups, ratio = par[11], 
+                    family = "binomial")
+pclh_prob = predict(cv_out, xnew = x[test,], s = "lambda.min")
+act = ifelse(y[test] == 0, "0", "1")
+pclh_ROC_n = roc(response = act, predictor = as.vector(pclh_prob), plot = FALSE, smooth = FALSE)
+pclh_ROC_s = roc(response = act, predictor = as.vector(pclh_prob), plot = FALSE, smooth = TRUE)
+```
+
+## Final plots
+
+### No clustering
+
+```{r no cluster ROC plot normal}
+pdf(file = "colon_ROC_no_n.pdf")
+
+par(family = "serif", mar = c(4.6, 4.6, 4.6, 2.1), font.main = 2)
+
+# blank plot
+plot(1, type = "n", las = 1, 
+     xlim = c(0, 1), ylim = c(0, 1), cex.axis = 1.5, cex.lab = 1.75,
+     xlab = "False Positive Rate", ylab = "True Positive Rate")
+title(main = "No Clustering", line = 2.75, cex.main = 2)
+par(font.main = 1)
+title(main = "-", cex.main = 1.25, line = 1)
+
+# diagonal line
+segments(x0 = 0, y0 = 0, x1 = 1, y1 = 1, col = "black", lty = 3)
+
+# lasso ROC
+lines(1 - lasso_ROC_n$specificities, lasso_ROC_n$sensitivities, col = cb_pal[1], lwd = 2)
+
+# enet ROC
+lines(1 - enet_ROC_n$specificities, enet_ROC_n$sensitivities, col = cb_pal[2], lwd = 2)
+
+# pcLasso ROC
+lines(1 - pcl_ROC_n$specificities, pcl_ROC_n$sensitivities, col = cb_pal[3], lwd = 2)
+
+# legend
+methods = c("Lasso", "Elastic Net", "pcLasso")
+legend("bottomright", legend = paste(methods, " (", auc[1:3], ")", sep = ""), 
+       col = cb_pal[1:3], lwd = 2, lty = 1, inset = 0.025, cex = 1.25)
+
+dev.off()
+```
+
+```{r no cluster ROC plot smooth}
+pdf(file = "colon_ROC_no_s.pdf")
+
+par(family = "serif", mar = c(4.6, 4.6, 4.6, 2.1), font.main = 2)
+
+# blank plot
+plot(1, type = "n", las = 1, 
+     xlim = c(0, 1), ylim = c(0, 1), cex.axis = 1.5, cex.lab = 1.75,
+     xlab = "False Positive Rate", ylab = "True Positive Rate")
+title(main = "No Clustering", line = 2.75, cex.main = 2)
+par(font.main = 1)
+title(main = "-", cex.main = 1.25, line = 1)
+
+# diagonal line
+segments(x0 = 0, y0 = 0, x1 = 1, y1 = 1, col = "black", lty = 3)
+
+# lasso ROC
+lines(1 - lasso_ROC_s$specificities, lasso_ROC_s$sensitivities, col = cb_pal[1], lwd = 2)
+
+# enet ROC
+lines(1 - enet_ROC_s$specificities, enet_ROC_s$sensitivities, col = cb_pal[2], lwd = 2)
+
+# pcLasso ROC
+lines(1 - pcl_ROC_s$specificities, pcl_ROC_s$sensitivities, col = cb_pal[3], lwd = 2)
+
+# legend
+methods = c("Lasso", "Elastic Net", "pcLasso")
+legend("bottomright", legend = paste(methods, " (", auc[1:3], ")", sep = ""), 
+       col = cb_pal[1:3], lwd = 2, lty = 1, inset = 0.025, cex = 1.25)
+
+dev.off()
+```
+
+### Kmeans clustering
+
+```{r k ROC plot normal}
+pdf(file = "colon_ROC_k_n.pdf")
+
+par(family = "serif", mar = c(4.6, 4.6, 4.6, 2.1), font.main = 2)
+
+# blank plot
+plot(1, type = "n", las = 1, 
+     xlim = c(0, 1), ylim = c(0, 1), cex.axis = 1.5, cex.lab = 1.75,
+     xlab = "False Positive Rate", ylab = "True Positive Rate")
+title(main = "K-means Clustering", line = 2.75, cex.main = 2)
+par(font.main = 1)
+title(main = "K = 9", cex.main = 1.25, line = 1)
+
+# diagonal line
+segments(x0 = 0, y0 = 0, x1 = 1, y1 = 1, col = "black", lty = 3)
+
+# glasso ROC
+lines(1 - glask_ROC_n$specificities, glask_ROC_n$sensitivities, col = cb_pal[4], lwd = 2)
+
+# sgLasso ROC
+lines(1 - sglk_ROC_n$specificities, sglk_ROC_n$sensitivities, col = cb_pal[5], lwd = 2)
+
+# cMCP ROC
+lines(1 - cmcpk_ROC_n$specificities, cmcpk_ROC_n$sensitivities, col = cb_pal[6], lwd = 2)
+
+# cMCP ROC
+lines(1 - pclk_ROC_n$specificities, pclk_ROC_n$sensitivities, col = cb_pal[7], lwd = 2)
+
+# legend
+methods = c("gLasso", "sgLasso", "cMCP", "pcLasso")
+legend("bottomright", legend = paste(methods, " (", auc[4:7], ")", sep = ""), 
+       col = cb_pal[4:7], lwd = 2, lty = 1, inset = 0.025, cex = 1.25)
+
+dev.off()
+```
+
+```{r k ROC plot smooth}
+pdf(file = "colon_ROC_k_s.pdf")
+
+par(family = "serif", mar = c(4.6, 4.6, 4.6, 2.1), font.main = 2)
+
+# blank plot
+plot(1, type = "n", las = 1, 
+     xlim = c(0, 1), ylim = c(0, 1), cex.axis = 1.5, cex.lab = 1.75,
+     xlab = "False Positive Rate", ylab = "True Positive Rate")
+title(main = "K-means Clustering", line = 2.75, cex.main = 2)
+par(font.main = 1)
+title(main = "K = 9", cex.main = 1.25, line = 1)
+
+# diagonal line
+segments(x0 = 0, y0 = 0, x1 = 1, y1 = 1, col = "black", lty = 3)
+
+# glasso ROC
+lines(1 - glask_ROC_s$specificities, glask_ROC_s$sensitivities, col = cb_pal[4], lwd = 2)
+
+# sgLasso ROC
+lines(1 - sglk_ROC_s$specificities, sglk_ROC_s$sensitivities, col = cb_pal[5], lwd = 2)
+
+# cMCP ROC
+lines(1 - cmcpk_ROC_s$specificities, cmcpk_ROC_s$sensitivities, col = cb_pal[6], lwd = 2)
+
+# cMCP ROC
+lines(1 - pclk_ROC_s$specificities, pclk_ROC_s$sensitivities, col = cb_pal[7], lwd = 2)
+
+# legend
+methods = c("gLasso", "sgLasso", "cMCP", "pcLasso")
+legend("bottomright", legend = paste(methods, " (", auc[4:7], ")", sep = ""), 
+       col = cb_pal[4:7], lwd = 2, lty = 1, inset = 0.025, cex = 1.25)
+
+dev.off()
+```
+
+### Hclustering
+
+```{r h ROC plot normal}
+pdf(file = "colon_ROC_h_n.pdf")
+
+par(family = "serif", mar = c(4.6, 4.6, 4.6, 2.1), font.main = 2)
+
+# blank plot
+plot(1, type = "n", las = 1, 
+     xlim = c(0, 1), ylim = c(0, 1), cex.axis = 1.5, cex.lab = 1.75,
+     xlab = "False Positive Rate", ylab = "True Positive Rate")
+title(main = "Hierarchical Clustering", line = 2.75, cex.main = 2)
+par(font.main = 1)
+title(main = "K = 7", cex.main = 1.25, line = 1)
+
+# diagonal line
+segments(x0 = 0, y0 = 0, x1 = 1, y1 = 1, col = "black", lty = 3)
+
+# glasso ROC
+lines(1 - glash_ROC_n$specificities, glash_ROC_n$sensitivities, col = cb_pal[1], lwd = 2)
+
+# sgLasso ROC
+lines(1 - sglh_ROC_n$specificities, sglh_ROC_n$sensitivities, col = cb_pal[2], lwd = 2)
+
+# cMCP ROC
+lines(1 - cmcph_ROC_n$specificities, cmcph_ROC_n$sensitivities, col = cb_pal[3], lwd = 2)
+
+# cMCP ROC
+lines(1 - pclh_ROC_n$specificities, pclh_ROC_n$sensitivities, col = cb_pal[4], lwd = 2)
+
+# legend
+methods = c("gLasso", "sgLasso", "cMCP", "pcLasso")
+legend("bottomright", legend = paste(methods, " (", auc[8:11], ")", sep = ""), 
+       col = cb_pal[1:4], lwd = 2, lty = 1, inset = 0.025, cex = 1.25)
+
+dev.off()
+```
+
+```{r h ROC plot smooth}
+pdf(file = "colon_ROC_h_s.pdf")
+
+par(family = "serif", mar = c(4.6, 4.6, 4.6, 2.1), font.main = 2)
+
+# blank plot
+plot(1, type = "n", las = 1, 
+     xlim = c(0, 1), ylim = c(0, 1), cex.axis = 1.5, cex.lab = 1.75,
+     xlab = "False Positive Rate", ylab = "True Positive Rate")
+title(main = "Hierarchical Clustering", line = 2.75, cex.main = 2)
+par(font.main = 1)
+title(main = "K = 7", cex.main = 1.25, line = 1)
+
+# diagonal line
+segments(x0 = 0, y0 = 0, x1 = 1, y1 = 1, col = "black", lty = 3)
+
+# glasso ROC
+lines(1 - glash_ROC_s$specificities, glash_ROC_s$sensitivities, col = cb_pal[1], lwd = 2)
+
+# sgLasso ROC
+lines(1 - sglh_ROC_s$specificities, sglh_ROC_s$sensitivities, col = cb_pal[2], lwd = 2)
+
+# cMCP ROC
+lines(1 - cmcph_ROC_s$specificities, cmcph_ROC_s$sensitivities, col = cb_pal[3], lwd = 2)
+
+# cMCP ROC
+lines(1 - pclh_ROC_s$specificities, pclh_ROC_s$sensitivities, col = cb_pal[4], lwd = 2)
+
+# legend
+methods = c("gLasso", "sgLasso", "cMCP", "pcLasso")
+legend("bottomright", legend = paste(methods, " (", auc[8:11], ")", sep = ""), 
+       col = cb_pal[1:4], lwd = 2, lty = 1, inset = 0.025, cex = 1.25)
+
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Eigenvalues
+
+```{r svd}
+svdx = svd(x)
+sval = svdx$d
+eval = sval^2
+scale_eval = eval/eval[1]
+```
+
+```{r group columns}
+mat = as.matrix(data[, -ncol(data)])
+
+# getting data matrix from each group
+gXk = list()
+for(i in 1:opt){
+  gXk[[i]] = mat[, which(groupsk == i)]
+}
+
+# SVD for each group
+gsvdk = list()
+for(i in 1:opt){
+  gsvdk[[i]] = (svd(gXk[[i]])$d)^2
+  gsvdk[[i]] = gsvdk[[i]]/gsvdk[[i]][1]
+}
+
+gXh = list()
+for(i in 1:nch){
+  gXh[[i]] = mat[, which(groupsh == i)]
+}
+
+# SVD for each group
+
+gsvdh = list()
+for(i in 1:nch){
+  gsvdh[[i]] = svd(gXh[[i]])$d
+  gsvdh[[i]] = gsvdh[[i]]/gsvdh[[i]][1]
+}
+```
+
+```{r plot eigenvalues k}
+pdf(file = "colon_eigen_k.pdf")
+
+par(family = "serif", mar = c(4.6, 4.6, 4.6, 2.1), font.main = 2)
+
+# blank plot
+plot(1, type = "n", xlim = c(0, nrow(data)), ylim = c(0, 1), las = 1, cex.axis = 1.5, cex.lab = 1.75,
+     xlab = "i", ylab = expression(lambda[i]))
+title(main = "K-means Clustering", line = 2.75, cex.main = 2)
+par(font.main = 1)
+title(main = "K = 9", cex.main = 1.25, line = 1)
+
+# drawing the lines
+pch_seq = c(0:(opt - 1))
+for(i in 1:opt){
+  points(seq(1, length(gsvdk[[i]]), 1), gsvdk[[i]], pch = pch_seq[i], col = cb_pal[i], type = "b")
+}
+
+# legend
+legend("topright", paste("Group ", c(1:opt), sep = ""), pch = pch_seq, col = cb_pal, 
+       inset = 0.025, bg = "white", cex = 1.25)
+
+dev.off()
+```
+
+```{r plot eigenvalues h}
+pdf(file = "colon_eigen_h.pdf")
+
+par(family = "serif", mar = c(4.6, 4.6, 4.6, 2.1), font.main = 2)
+
+# blank plot
+plot(1, type = "n", xlim = c(0, nrow(data)), ylim = c(0, 1), las = 1, cex.axis = 1.5, cex.lab = 1.75,
+     xlab = "i", ylab = expression(lambda[i]))
+title(main = "Hierarchical Clustering", line = 2.75, cex.main = 2)
+par(font.main = 1)
+title(main = "K = 7", cex.main = 1.25, line = 1)
+
+# drawing the lines
+pch_seq = c(0:(nch - 1))
+for(i in 1:nch){
+  points(seq(1, length(gsvdh[[i]]), 1), gsvdh[[i]], pch = pch_seq[i], col = cb_pal[i], type = "b")
+}
+
+# legend
+legend("topright", paste("Group ", c(1:nch), sep = ""), pch = pch_seq, col = cb_pal, 
+       inset = 0.025, bg = "white", cex = 1.25)
+
+dev.off()
+```
+
+
+
+# Cluster visuals
+
+## GAP statistic
+
+```{r gap statistic}
+x = as.data.frame(t(data[, -ncol(data)]))
+
+#set.seed(100)
+#k_mean = clusGap(x, FUNcluster = kmeans, nstart = 20, K.max = 20, B = 500)
+#k_mean
+
+# optimal number of clusters
+#opt = maxSE(f = k_mean$Tab[, "gap"], SE.f = k_mean$Tab[, "SE.sim"])
+opt = 9
+
+# gives k = 9 as optimal amount of clusters
+
+pdf(file = "colon_gap_stat.pdf")
+
+par(family = "serif", mar = c(5.1, 5.1, 4.6, 2.1), font.main = 2)
+plot(k_mean, las = 1, xlim = c(0, 20),
+     xlab = "m", main = "", ylab = "", cex.axis = 1.5, cex.lab = 1.75, cex = 1, pch = 1,
+     do.arrows = TRUE, arrowArgs = list(col = "red3", length = 1/12, angle = 90, code = 3))
+title(main = "Colon Data Set Gap Statistic", line = 2.75, cex.main = 2)
+title(ylab = "Gap(m)", line = 3.75, cex.lab = 1.75)
+par(font.main = 1)
+title(main = "B = 500, nstart = 20, M = 20, K = 9", cex.main = 1.35, line = 1)
+
+# vertical line segment
+segments(x0 = opt, y0 = 2.25, x1 = opt, y1 = k_mean$Tab[opt, 3] + k_mean$Tab[opt, 4] + 0.0075,
+         col = "black", lty = 3)
+segments(x0 = opt, y0 = 1.95, x1 = opt, y1 = k_mean$Tab[opt, 3] - k_mean$Tab[opt, 4] - 0.0075,
+         col = "black", lty = 3)
+
+# legend
+leg_text = c("Gap(m)", expression(paste(delta, "(m)", sep = "")))
+leg_box = legend("bottomright", leg_text, lty = c(NA, 1), col = c("black", "red3"), 
+                 inset = 0.025, plot = TRUE, cex = 1.25, pt.cex = 1)
+r = leg_box$rect
+legend("bottomright", leg_text, lty = c(NA, 1), pch = c(1, NA), col = c("black", "red3"), 
+       inset = 0.025, bty = "n", cex = 1.25, pt.cex = 1)
+rect(xleft = r$left, ybottom = r$top - r$h, xright = r$left + r$w, ytop = r$top)
+
+dev.off()
+```
+
+## Cluster plot
+
+```{r cluster plot}
+set.seed(1)
+k_clust = kmeans(x, centers = opt, nstart = 20)
+
+# making the cluster plot
+#par(family = "serif", mar = c(5.6, 5.6, 2.6, 2.1), font.main = 2)
+#clusplot(x, k_clust$cluster,
+#         las = 1, color = TRUE, shade = TRUE, labels = 3, lines = 0, main = "",
+#         col.p = cb_pal[k_clust$cluster], cex.axis = 1.5, cex.lab = 1.75)
+# two components explain 79.19% of the point variability
+
+# want to make look nicer, so I will build my own from scratch!
+# plotting the points against the first two principal components -- SVD
+
+xm = as.matrix(x)
+svd_x = svd(xm)
+U = -svd_x$u
+D = diag(62); diag(D) = svd_x$d
+V = svd_x$v
+
+PC = ((U %*% D)/5000)[, 1:2]
+
+# subsetting points by each cluster
+clus_grp = list()
+cent = matrix(NA, nrow = opt, ncol = 2)
+for(i in 1:opt){
+  ind = which(k_clust$cluster == i)
+  clus_grp[[i]] = PC[ind, ]
+  cent[i, 1] = mean(clus_grp[[i]][, 1])
+  cent[i, 2] = mean(clus_grp[[i]][, 2])
+}
+
+library(vegan) # need this to draw boxes
+
+pdf(file = "colon_clus_plot.pdf")
+
+# making the plot
+par(family = "serif", mar = c(5.1, 5.1, 4.6, 2.1), font.main = 2)
+plot(PC[,1], PC[,2], las = 1, pch = c(0:8)[k_clust$cluster], col = cb_pal[k_clust$cluster],
+     cex.axis = 1.5, cex.lab = 1.75, xlab = expression(bold(z)[1]), ylab = expression(bold(z)[2]))
+title(main = "Colon Data Set Cluster Plot", line = 2.75, cex.main = 2)
+par(font.main = 1)
+title(main = "These two components explain 79.19% of the point variability", cex.main = 1.35, line = 1)
+
+# shading in background of each cluster, choose between hull and elipse
+# if using elipse, have to use elipse package, but this gives us all information for that
+clus_bor = ordihull(PC, k_clust$cluster, lty = 0)
+#clus_bor = ordiellipse(PC, k_clust$cluster, lty = 1)
+for(i in 1:opt){
+  polygon(x = clus_bor[[i]][, 1], y = clus_bor[[i]][, 2], col = cb_pal_25[i], border = NA)
+}
+
+# labels on plot
+ex = 0.15; ey = 0.125
+for(i in 1:opt){
+  rect(cent[i, 1] - ex, cent[i, 2] - ey, cent[i, 1] + ex, cent[i, 2] + ey,
+       col = "white", border = "black")
+}
+text(x = cent[, 1], y = cent[, 2], labels = 1:opt)
+
+dev.off()
+```
+
+## Dendrogram
+
+```{r dendrogram}
+x = as.data.frame(t(data[, -ncol(data)]))
+
+# hclustering groups, using correlation as the dissimilarity
+dd = as.dist(1 - cor(t(x)))
+hclust_comp = hclust(dd, method = "complete")
+method = hclust_comp
+
+# going with 7
+nch = 7
+groupsh = as.numeric(cutree(method, nch))
+
+# making the dendrogram
+pdf(file = "colon_den.pdf", width = 8, height = 5)
+
+par(family = "serif", mar = c(2.5, 2.5, 2.5, 2.5),
+    font.main = 2)
+source("http://addictedtor.free.fr/packages/A2R/lastVersion/R/code.R")
+# choose from cb_pal or something like vir_pal(nch)
+col_scheme = cb_pal
+A2Rplot(method, k = nch, boxes = FALSE, col.up = "black",
+        col.down = col_scheme, lty.up = 1, show.labels = FALSE, lwd.down = 1,
+        #main = "Dendrogram for Colon Predictors"
+        main = "")
+abline(h = 0.8375, col = "black", lty = 2)
+title(main = "Colon Data Set Dendrogram", line = 0.5)
+par(font.main = 1)
+title(main = "Using Complete Linkage with Correlation as Dissimilarity", line = -20.65, cex.main = 0.9)
+title(main = "K = 7", line = -22, cex.main = 0.9)
+
+dev.off()
+```
+

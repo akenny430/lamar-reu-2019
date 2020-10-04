@@ -1,0 +1,885 @@
+---
+title: "Code for leuk Data Set"
+author: "\\emph{Aiden Kenny}"
+date: "\\emph{Summer 2019}"
+fontsize: 11pt
+geometry: margin = 0.75in
+output: pdf_document
+header-includes:
+- \usepackage[usenames,dvipsnames,table]{xcolor}
+- \usepackage{amsmath}
+- \usepackage{amssymb}
+- \usepackage{siunitx}
+- \usepackage{textcomp}
+- \usepackage{pgfplots}
+- \pgfplotsset{compat=1.15}
+- \usepackage{tikzsymbols}
+- \usepackage{amssymb}
+- \usepackage{bm}
+- \usepackage[T1]{fontenc}
+- \usepackage[english]{babel}
+---
+
+
+```{r setup, include = TRUE, message = FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+
+# colors
+library(viridis)
+vir_pal = function(n){
+  viridis(n, alpha = 1)
+}
+inf_pal = function(n){
+  inferno(n, alpha = 1)
+}
+# 2: original color blind palettes
+cb_pal = c("#E69F00", "#56B4E9", "#009E73", "#CC79A7", "#F0E442", "#0072B2", 
+               "#D55E00", "#999999", "#000000")
+# 3: changing opacity of cb_pal
+cb_as_rgb = col2rgb(cb_pal)
+# 25%
+cb_pal_25 = rep(NA, length(cb_pal))
+for(i in 1:length(cb_pal)){
+  cb_pal_25[i] = rgb(cb_as_rgb[1, i]/255, cb_as_rgb[2, i]/255, cb_as_rgb[3, i]/255, 0.25)
+}
+# 50%
+cb_pal_50 = rep(NA, length(cb_pal))
+for(i in 1:length(cb_pal)){
+  cb_pal_50[i] = rgb(cb_as_rgb[1, i]/255, cb_as_rgb[2, i]/255, cb_as_rgb[3, i]/255, 0.5)
+}
+
+# regularization packages
+library(glmnet)
+library(grpreg)
+library(SGL)
+library(pcLasso)
+
+# clustering
+library(cluster)
+
+# ROC curves
+library(pROC)
+
+# making LaTex table
+library(xtable)
+```
+
+# Reading in the Data Sets
+
+```{r data sets}
+setwd("C:/Users/akenn/Desktop/Code/R_Code/LU_REU/Code/data_leuk") # for laptop
+#setwd("C:/Users/reu_akenny/Desktop/LU_REU/Code") # for LAMAR computer
+
+#data = read.csv("colon_data_cleaned.csv", header = TRUE)
+#data$yn = ifelse(data$yn == -1, 0, 1)
+data = read.csv("leuk_data_cleaned.csv", header = TRUE)
+```
+
+# Training and Test Set
+
+```{r training and test set}
+set.seed(1)
+train = sort(sample(1:nrow(data), nrow(data)/2))
+test = (1:nrow(data))[-train]
+```
+
+# No Clustering
+
+## The Lasso
+
+```{r leuk lasso, message = FALSE}
+lasso_inf = data.frame(lam = NA, par = NA, dev = NA, mis = NA, sig_coef = NA, 
+                       sig_grp = NA, fpr = NA, tpr = NA, auc = NA)
+
+x = model.matrix(yn ~ ., data = data)[,-1]
+y = data$yn
+
+# cv and getting optimal tuning parameter, while also measuring time
+set.seed(1)
+cv_out = cv.glmnet(x[train,], as.factor(y[train]), alpha = 1, family = "binomial")
+lasso_inf$lam = cv_out$lambda.min
+
+# deviance
+index = which(cv_out$lambda == cv_out$lambda.min)
+lasso_inf$dev = cv_out$cvm[index]
+
+# getting the error rate using lambda.min
+lasso_prob = predict(cv_out, s = "lambda.min", newx = x[test,], type = "response")
+lasso_pred = predict(cv_out, s = "lambda.min", newx = x[test,], type = "class")
+lasso_inf$mis = paste(sum(y[test] != lasso_pred), "/", length(test), sep = "")
+
+# nonzero coefficients
+best_coef = coef(cv_out, s = "lambda.min")
+lasso_inf$sig_coef = sum(best_coef != 0)
+
+# confusion matrix
+pred = ifelse(lasso_pred == 0, "0", "1")
+act = ifelse(y[test] == 0, "0", "1")
+all = sort(union(act, pred))
+pred = factor(pred, levels = all)
+act = factor(act, levels = all)
+conf = table(pred, act)
+
+# false positive and true positive rates
+lasso_inf$fpr = paste(conf[2, 1], "/", (conf[1, 1] + conf[2, 1]), sep = "")
+lasso_inf$tpr = paste(conf[2, 2], "/", (conf[1, 2] + conf[2, 2]), sep = "")
+
+# AUC
+lasso_ROC = roc(response = act, predictor = as.vector(lasso_prob), 
+                plot = FALSE, smooth = FALSE)
+lasso_inf$auc = lasso_ROC$auc
+
+rownames(lasso_inf) = "leuk_lasso"
+
+lasso_inf
+```
+
+## The Elastic Net
+
+```{r elastic net, message = FALSE}
+a = c(0.95, 0.8, 0.6, 0.4, 0.2, 0.05); la = length(a)
+enet_inf = data.frame(lam = rep(NA, la), par = rep(NA, la), dev = rep(NA, la), 
+                      mis = rep(NA, la), sig_coef = rep(NA, la), sig_grp = rep(NA, la),
+                      fpr = rep(NA, la), tpr = rep(NA, la), auc = rep(NA, la))
+
+x = model.matrix(yn ~ ., data = data)[,-1]
+y = data$yn
+
+for(i in 1:la){
+
+set.seed(1)
+cv_out = cv.glmnet(x[train,], as.factor(y[train]), alpha = a[i], family = "binomial")
+enet_inf[i, ]$lam = cv_out$lambda.min
+
+enet_inf[i, ]$par = a[i]
+
+# deviance
+index = which(cv_out$lambda == cv_out$lambda.min)
+enet_inf[i, ]$dev = cv_out$cvm[index]
+
+# getting the error rate using lambda.min
+enet_prob = predict(cv_out, s = "lambda.min", newx = x[test,], type = "response")
+enet_pred = predict(cv_out, s = "lambda.min", newx = x[test,], type = "class")
+enet_inf[i, ]$mis = paste(sum(y[test] != enet_pred), "/", length(test), sep = "")
+
+# nonzero coefficients, could also use $cv_out$nzero
+best_coef = coef(cv_out, s = "lambda.min")
+enet_inf[i, ]$sig_coef = sum(best_coef != 0)
+
+# confusion matrix
+pred = ifelse(enet_pred == 0, "0", "1")
+act = ifelse(y[test] == 0, "0", "1")
+all = sort(union(act, pred))
+pred = factor(pred, levels = all)
+act = factor(act, levels = all)
+conf = table(pred, act)
+
+# false positive and true positive rates
+enet_inf[i, ]$fpr = paste(conf[2, 1], "/", (conf[1, 1] + conf[2, 1]), sep = "")
+enet_inf[i, ]$tpr = paste(conf[2, 2], "/", (conf[1, 2] + conf[2, 2]), sep = "")
+
+# AUC
+enet_ROC = roc(response = act, predictor = as.vector(enet_prob), 
+                plot = FALSE, smooth = FALSE)
+enet_inf[i, ]$auc = enet_ROC$auc
+
+}
+
+rownames(enet_inf) = paste("leuk_enet_mod", 1:la, sep = "")
+
+#enet_inf
+
+enet_best = enet_inf[which.min(enet_inf$dev), ]
+enet_best
+```
+
+## pcLasso
+
+```{r pcLasso, message = FALSE}
+rat = c(0.95, 0.9, 0.75, 0.5, 0.25, 0.1); la = length(rat)
+pcl_inf = data.frame(lam = rep(NA, la), par = rep(NA, la), dev = rep(NA, la), 
+                     mis = rep(NA, la), sig_coef = rep(NA, la), sig_grp = rep(NA, la),
+                     fpr = rep(NA, la), tpr = rep(NA, la), auc = rep(NA, la))
+
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+for(i in 1:la){
+
+set.seed(1)
+cv_out = cv.pcLasso(x[train, ], y[train], ratio = rat[i], family = "binomial")
+pcl_inf[i, ]$lam = cv_out$lambda.min
+
+pcl_inf[i, ]$par = rat[i]
+
+# deviance
+index = which(cv_out$lambda == cv_out$lambda.min)
+pcl_inf[i, ]$dev = cv_out$cvm[index]
+
+# getting the error rate using lambda.min
+pcl_prob = predict(cv_out, xnew = x[test,], s = "lambda.min")
+pcl_pred = ifelse(pcl_prob >= 0.5, 1, 0)
+pcl_inf[i, ]$mis = paste(sum(y[test] != pcl_pred), "/", length(test), sep = "")
+
+# nonzero coefficients, could also use $cv_out$nzero
+pcl_inf[i, ]$sig_coef = cv_out$nzero[cv_out$lambda == cv_out$lambda.min]
+
+# confusion matrix
+pred = ifelse(pcl_pred == 0, "0", "1")
+act = ifelse(y[test] == 0, "0", "1")
+all = sort(union(act, pred))
+pred = factor(pred, levels = all)
+act = factor(act, levels = all)
+conf = table(pred, act)
+
+# false positive and true positive rates
+pcl_inf[i, ]$fpr = paste(conf[2, 1], "/", (conf[1, 1] + conf[2, 1]), sep = "")
+pcl_inf[i, ]$tpr = paste(conf[2, 2], "/", (conf[1, 2] + conf[2, 2]), sep = "")
+
+# AUC
+pcl_ROC = roc(response = act, predictor = as.vector(pcl_prob), 
+                plot = FALSE, smooth = FALSE)
+pcl_inf[i, ]$auc = pcl_ROC$auc
+
+}
+
+rownames(pcl_inf) = paste("leuk_pcl_no_mod", 1:la, sep = "")
+
+#pcl_inf
+
+pcl_best = pcl_inf[which.min(pcl_inf$dev), ]
+pcl_best
+```
+
+# Clustering
+
+## K-means clustering
+
+```{r K-means}
+x = as.data.frame(t(data[, -ncol(data)]))
+opt = 19
+
+# k means groups
+set.seed(1)
+groupsk = as.numeric(kmeans(x, centers = opt, nstart = 20, iter.max = 30)$cluster)
+lengthsk = rep(NA, opt)
+for(i in 1:opt){
+  lengthsk[i] = length(groupsk[groupsk == i])
+}
+#lengthsk
+```
+
+## Hierarchical clustering
+
+```{r hclustering}
+x = as.data.frame(t(data[, -ncol(data)]))
+nch = 5
+
+dd = as.dist(1 - cor(t(x)))
+hclust_comp = hclust(dd, method = "complete")
+groupsh = as.numeric(cutree(hclust_comp, nch))
+lengthsh = rep(NA, nch)
+for (i in 1:nch){
+  lengthsh[i] = length(groupsh[groupsh == i])
+}
+#lengthsh
+```
+
+# The Group Setting
+
+## Group Lasso
+
+### K-means clustering the predictors
+
+```{r gLasso K-means, message = FALSE}
+glask_inf = data.frame(lam = NA, par = NA, dev = NA, mis = NA, sig_coef = NA, 
+                       sig_grp = NA, fpr = NA, tpr = NA, auc = NA)
+
+groups = groupsk
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+# cv and getting optimal tuning parameter
+set.seed(1)
+cv_out = cv.grpreg(X = x[train, ], y = y[train], group = groups, family = "binomial",
+                   penalty = "grLasso", alpha = 1)
+glask_inf$lam = cv_out$lambda.min
+
+# deviance
+glask_inf$dev = cv_out$cve[cv_out$min]
+
+# getting the error rate using lambda.min
+glask_prob = predict(cv_out, lambda = cv_out$lambda.min, X = x[test, ], 
+                     type = "response")
+glask_pred = predict(cv_out, lambda = cv_out$lambda.min, X = x[test, ], type = "class")
+glask_inf$mis = paste(sum(y[test] != glask_pred), "/", length(test), sep = "")
+
+# nonzero coefficients
+best_coef = predict(object = cv_out, lambda = cv_out$lambda.min, type = "coefficients")
+glask_inf$sig_coef = sum(best_coef != 0)
+
+# nonzero groups
+nonzcoef = which(cv_out$fit$beta[-1, cv_out$min] != 0)
+nonzindex = groups[nonzcoef]
+glask_inf$sig_grp = length(unique(nonzindex))
+
+# confusion matrix
+pred = ifelse(glask_pred == 0, "0", "1")
+act = ifelse(y[test] == 0, "0", "1")
+all = sort(union(act, pred))
+pred = factor(pred, levels = all)
+act = factor(act, levels = all)
+conf = table(pred, act)
+
+# false positive and true positive rates
+glask_inf$fpr = paste(conf[2, 1], "/", (conf[1, 1] + conf[2, 1]), sep = "")
+glask_inf$tpr = paste(conf[2, 2], "/", (conf[1, 2] + conf[2, 2]), sep = "")
+
+# AUC
+glask_ROC = roc(response = act, predictor = as.vector(glask_prob), 
+                plot = FALSE, smooth = FALSE)
+glask_inf$auc = glask_ROC$auc
+
+rownames(glask_inf) = "leuk_glas_k"
+
+glask_inf
+```
+
+### Hclustering the predictors
+
+```{r gLasso hclust, message = FALSE}
+glash_inf = data.frame(lam = NA, par = NA, dev = NA, mis = NA, sig_coef = NA, 
+                       sig_grp = NA, fpr = NA, tpr = NA, auc = NA)
+
+groups = groupsh
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+# cv and getting optimal tuning parameter
+set.seed(1)
+cv_out = cv.grpreg(X = x[train, ], y = y[train], group = groups, family = "binomial",
+                   penalty = "grLasso", alpha = 1)
+glash_inf$lam = cv_out$lambda.min
+
+# deviance
+glash_inf$dev = cv_out$cve[cv_out$min]
+
+# getting the error rate using lambda.min
+glash_prob = predict(cv_out, lambda = cv_out$lambda.min, X = x[test, ], 
+                     type = "response")
+glash_pred = predict(cv_out, lambda = cv_out$lambda.min, X = x[test, ], type = "class")
+glash_inf$mis = paste(sum(y[test] != glash_pred), "/", length(test), sep = "")
+
+# nonzero coefficients
+best_coef = predict(object = cv_out, lambda = cv_out$lambda.min, type = "coefficients")
+glash_inf$sig_coef = sum(best_coef != 0)
+
+# nonzero groups
+nonzcoef = which(cv_out$fit$beta[-1, cv_out$min] != 0)
+nonzindex = groups[nonzcoef]
+glash_inf$sig_grp = length(unique(nonzindex))
+
+# confusion matrix
+pred = ifelse(glash_pred == 0, "0", "1")
+act = ifelse(y[test] == 0, "0", "1")
+#conf = table(pred, act)
+all = sort(union(act, pred))
+pred = factor(pred, levels = all)
+act = factor(act, levels = all)
+conf = table(pred, act)
+
+# false positive and true positive rates
+glash_inf$fpr = paste(conf[2, 1], "/", (conf[1, 1] + conf[2, 1]), sep = "")
+glash_inf$tpr = paste(conf[2, 2], "/", (conf[1, 2] + conf[2, 2]), sep = "")
+
+# AUC
+glash_ROC = roc(response = act, predictor = as.vector(glash_prob), 
+                plot = FALSE, smooth = FALSE)
+glash_inf$auc = glash_ROC$auc
+
+rownames(glash_inf) = "leuk_glas_h"
+
+glash_inf
+```
+
+## cMCP 
+
+### K-means clustering
+
+```{r cMCP kmeans, message = FALSE}
+gam = c(30); la = length(gam)
+cmcpk_inf = data.frame(lam = rep(NA, la), par = rep(NA, la), dev = rep(NA, la), 
+                     mis = rep(NA, la), sig_coef = rep(NA, la), sig_grp = rep(NA, la),
+                     fpr = rep(NA, la), tpr = rep(NA, la), auc = rep(NA, la))
+
+groups = groupsk
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+for(i in 1:la){
+
+# cv and getting optimal tuning parameter
+set.seed(1)
+cv_out = cv.grpreg(X = x[train, ], y = y[train], group = groups, family = "binomial",
+                   penalty = "cMCP", alpha = 1, gamma = gam[i])
+cmcpk_inf[i, ]$lam = cv_out$lambda.min
+
+cmcpk_inf[i, ]$par = gam[i]
+
+# deviance
+cmcpk_inf[i, ]$dev = cv_out$cve[cv_out$min]
+
+# getting the error rate using lambda.min
+cmcpk_prob = predict(cv_out, lambda = cv_out$lambda.min, X = x[test, ], 
+                     type = "response")
+cmcpk_pred = predict(cv_out, lambda = cv_out$lambda.min, X = x[test, ], type = "class")
+cmcpk_inf[i, ]$mis = paste(sum(y[test] != cmcpk_pred), "/", length(test), sep = "")
+
+# nonzero coefficients
+best_coef = predict(object = cv_out, lambda = cv_out$lambda.min, type = "coefficients")
+cmcpk_inf[i, ]$sig_coef = sum(best_coef != 0)
+
+# nonzero groups
+nonzcoef = which(cv_out$fit$beta[-1, cv_out$min] != 0)
+nonzindex = groups[nonzcoef]
+cmcpk_inf[i, ]$sig_grp = length(unique(nonzindex))
+
+# confusion matrix
+pred = ifelse(cmcpk_pred == 0, "0", "1")
+act = ifelse(y[test] == 0, "0", "1")
+all = sort(union(act, pred))
+pred = factor(pred, levels = all)
+act = factor(act, levels = all)
+conf = table(pred, act)
+
+# false positive and true positive rates
+cmcpk_inf[i, ]$fpr = paste(conf[2, 1], "/", (conf[1, 1] + conf[2, 1]), sep = "")
+cmcpk_inf[i, ]$tpr = paste(conf[2, 2], "/", (conf[1, 2] + conf[2, 2]), sep = "")
+
+# AUC
+cmcpk_ROC = roc(response = act, predictor = as.vector(cmcpk_prob), 
+                plot = FALSE, smooth = FALSE)
+cmcpk_inf[i, ]$auc = cmcpk_ROC$auc
+
+}
+
+rownames(cmcpk_inf) = paste("leuk_cmcp_k_mod", 1:la, sep = "")
+
+#cmcpk_inf
+
+cmcpk_best = cmcpk_inf[which.min(cmcpk_inf$dev), ]
+cmcpk_best
+```
+
+### Hclustering 
+
+```{r cMCP hclust, message = FALSE}
+gam = c(30); la = length(gam)
+cmcph_inf = data.frame(lam = rep(NA, la), par = rep(NA, la), dev = rep(NA, la), 
+                     mis = rep(NA, la), sig_coef = rep(NA, la), sig_grp = rep(NA, la),
+                     fpr = rep(NA, la), tpr = rep(NA, la), auc = rep(NA, la))
+
+groups = groupsh
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+for(i in 1:la){
+
+# cv and getting optimal tuning parameter
+set.seed(1)
+cv_out = cv.grpreg(X = x[train, ], y = y[train], group = groups, family = "binomial",
+                   penalty = "cMCP", alpha = 1, gamma = gam[i])
+cmcph_inf[i, ]$lam = cv_out$lambda.min
+
+cmcph_inf[i, ]$par = gam[i]
+
+# deviance
+cmcph_inf[i, ]$dev = cv_out$cve[cv_out$min]
+
+# getting the error rate using lambda.min
+cmcph_prob = predict(cv_out, lambda = cv_out$lambda.min, X = x[test, ], 
+                     type = "response")
+cmcph_pred = predict(cv_out, lambda = cv_out$lambda.min, X = x[test, ], type = "class")
+cmcph_inf[i, ]$mis = paste(sum(y[test] != cmcph_pred), "/", length(test), sep = "")
+
+# nonzero coefficients
+best_coef = predict(object = cv_out, lambda = cv_out$lambda.min, type = "coefficients")
+cmcph_inf[i, ]$sig_coef = sum(best_coef != 0)
+
+# nonzero groups
+nonzcoef = which(cv_out$fit$beta[-1, cv_out$min] != 0)
+nonzindex = groups[nonzcoef]
+cmcph_inf[i, ]$sig_grp = length(unique(nonzindex))
+
+# confusion matrix
+pred = ifelse(cmcph_pred == 0, "0", "1")
+act = ifelse(y[test] == 0, "0", "1")
+#conf = table(pred, act)
+all = sort(union(act, pred))
+pred = factor(pred, levels = all)
+act = factor(act, levels = all)
+conf = table(pred, act)
+
+# false positive and true positive rates
+cmcph_inf[i, ]$fpr = paste(conf[2, 1], "/", (conf[1, 1] + conf[2, 1]), sep = "")
+cmcph_inf[i, ]$tpr = paste(conf[2, 2], "/", (conf[1, 2] + conf[2, 2]), sep = "")
+
+# AUC
+cmcph_ROC = roc(response = act, predictor = as.vector(cmcph_prob), 
+                plot = FALSE, smooth = FALSE)
+cmcph_inf[i, ]$auc = cmcph_ROC$auc
+
+}
+
+rownames(cmcph_inf) = paste("leuk_cmcp_h_mod", 1:la, sep = "")
+
+#cmcph_inf
+
+cmcph_best = cmcph_inf[which.min(cmcph_inf$dev), ]
+cmcph_best
+```
+
+## sgLasso
+
+### K-means clustering
+
+```{r sgLasso kmeans, message = FALSE}
+a = c(0.95, 0.8, 0.6, 0.4, 0.2, 0.05); la = length(a)
+sglk_inf = data.frame(lam = rep(NA, la), par = rep(NA, la), dev = rep(NA, la), 
+                      mis = rep(NA, la), sig_coef = rep(NA, la), sig_grp = rep(NA, la),
+                      fpr = rep(NA, la), tpr = rep(NA, la), auc = rep(NA, la))
+
+groups = groupsk
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+info = list(x = x[train, ], y = y[train])
+
+for(i in 1:la){
+
+# cross validation
+set.seed(1)
+cv_out = cvSGL(data = info, index = groups, type = "logit", alpha = a[i], nlam = 100)
+
+# lambda
+lam_seq = cv_out$lambdas
+lambda.min = cv_out$lambdas[which.min(cv_out$lldiff)]
+index = which.min(cv_out$lldiff)
+sglk_inf[i, ]$lam = lambda.min
+
+# alpha
+sglk_inf[i, ]$par = a[i]
+
+# deviance
+dev = cv_out$lldiff/length(train)
+sglk_inf[i, ]$dev = dev[index]
+
+# fitting lambda with the best tuning parameter
+sglk_mod = SGL(data = info, index = groups, type = "logit", alpha = a[i], nlam = 100,
+               lambdas = lam_seq)
+
+# getting the error rate using lambda.min
+sglk_prob = predictSGL(sglk_mod, newX = x[test, ], lam = index)
+sglk_pred = ifelse(sglk_prob >= 0.5, 1, 0)
+sglk_inf[i, ]$mis = paste(sum(y[test] != sglk_pred), "/", length(test), sep = "")
+
+# nonzero coefficients
+sglk_inf[i, ]$sig_coef = sum(sglk_mod$beta[, index] != 0) +
+  ifelse(sglk_mod$intercept[index] != 0, 1, 0)
+
+# nonzero groups
+nonzcoef = which(sglk_mod$beta[, index] != 0)
+nonzindex = groups[nonzcoef]
+sglk_inf[i, ]$sig_grp = length(unique(nonzindex))
+
+# confusion matrix
+pred = ifelse(sglk_pred == 0, "0", "1")
+act = ifelse(y[test] == 0, "0", "1")
+all = sort(union(act, pred))
+pred = factor(pred, levels = all)
+act = factor(act, levels = all)
+conf = table(pred, act)
+
+# false positive and true positive rates
+sglk_inf[i, ]$fpr = paste(conf[2, 1], "/", (conf[1, 1] + conf[2, 1]), sep = "")
+sglk_inf[i, ]$tpr = paste(conf[2, 2], "/", (conf[1, 2] + conf[2, 2]), sep = "")
+
+# AUC
+sglk_ROC = roc(response = act, predictor = as.vector(sglk_prob), 
+                plot = FALSE, smooth = FALSE)
+sglk_inf[i, ]$auc = sglk_ROC$auc
+
+}
+
+rownames(sglk_inf) = paste("leuk_sgl_k_mod", 1:la, sep = "")
+
+#sglk_inf
+
+sglk_best = sglk_inf[which.min(sglk_inf$dev), ]
+sglk_best
+
+```
+
+### Hclustering
+
+```{r sgLasso hclust}
+a = c(0.95, 0.8, 0.6, 0.4, 0.2, 0.05); la = length(a)
+sglh_inf = data.frame(lam = rep(NA, la), par = rep(NA, la), dev = rep(NA, la), 
+                      mis = rep(NA, la), sig_coef = rep(NA, la), sig_grp = rep(NA, la),
+                      fpr = rep(NA, la), tpr = rep(NA, la), auc = rep(NA, la))
+
+groups = groupsh
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+info = list(x = x[train, ], y = y[train])
+
+for(i in 1:la){
+
+# cross validation
+set.seed(1)
+cv_out = cvSGL(data = info, index = groups, type = "logit", alpha = a[i], nlam = 100)
+
+# lambda
+lam_seq = cv_out$lambdas
+lambda.min = cv_out$lambdas[which.min(cv_out$lldiff)]
+index = which.min(cv_out$lldiff)
+sglh_inf[i, ]$lam = lambda.min
+
+# alpha
+sglh_inf[i, ]$par = a[i]
+
+# deviance
+dev = cv_out$lldiff/length(train)
+sglh_inf[i, ]$dev = dev[index]
+
+# fitting lambda with the best tuning parameter
+sglh_mod = SGL(data = info, index = groups, type = "logit", alpha = a[i], nlam = 100,
+               lambdas = lam_seq)
+
+# getting the error rate using lambda.min
+sglh_prob = predictSGL(sglh_mod, newX = x[test, ], lam = index)
+sglh_pred = ifelse(sglh_prob >= 0.5, 1, 0)
+sglh_inf[i, ]$mis = paste(sum(y[test] != sglh_pred), "/", length(test), sep = "")
+
+# nonzero coefficients
+sglh_inf[i, ]$sig_coef = sum(sglh_mod$beta[, index] != 0) +
+  ifelse(sglh_mod$intercept[index] != 0, 1, 0)
+
+# nonzero groups
+nonzcoef = which(sglh_mod$beta[, index] != 0)
+nonzindex = groups[nonzcoef]
+sglh_inf[i, ]$sig_grp = length(unique(nonzindex))
+
+# confusion matrix
+pred = ifelse(sglh_pred == 0, "0", "1")
+act = ifelse(y[test] == 0, "0", "1")
+all = sort(union(act, pred))
+pred = factor(pred, levels = all)
+act = factor(act, levels = all)
+conf = table(pred, act)
+
+# false positive and true positive rates
+sglh_inf[i, ]$fpr = paste(conf[2, 1], "/", (conf[1, 1] + conf[2, 1]), sep = "")
+sglh_inf[i, ]$tpr = paste(conf[2, 2], "/", (conf[1, 2] + conf[2, 2]), sep = "")
+
+# AUC
+sglh_ROC = roc(response = act, predictor = as.vector(sglh_prob), 
+                plot = FALSE, smooth = FALSE)
+sglh_inf[i, ]$auc = sglh_ROC$auc
+
+}
+
+rownames(sglh_inf) = paste("leuk_sgl_h_mod", 1:la, sep = "")
+
+#sglh_inf
+
+sglh_best = sglh_inf[which.min(sglh_inf$dev), ]
+sglh_best
+```
+
+
+## pcLasso with groups
+
+### K-means clustering
+
+```{r pcLasso kmeans, message = FALSE}
+rat = c(0.95, 0.9, 0.75, 0.5, 0.25, 0.1); la = length(rat)
+pclk_inf = data.frame(lam = rep(NA, la), par = rep(NA, la), dev = rep(NA, la), 
+                     mis = rep(NA, la), sig_coef = rep(NA, la), sig_grp = rep(NA, la),
+                     fpr = rep(NA, la), tpr = rep(NA, la), auc = rep(NA, la))
+
+group_num = groupsk
+group_dat = data.frame(x = seq(1, (ncol(data) - 1), 1), y = group_num)
+groups = list()
+for(i in 1:tail(sort(unique(group_num)), 1)){
+  groups[[i]] = group_dat[group_dat$y == i, 1]
+}
+
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+for(i in 1:la){
+
+set.seed(1)
+cv_out = cv.pcLasso(x[train, ], y[train], groups = groups, ratio = rat[i], 
+                    family = "binomial")
+pclk_inf[i, ]$lam = cv_out$lambda.min
+
+pclk_inf[i, ]$par = rat[i]
+
+# deviance
+index = which(cv_out$lambda == cv_out$lambda.min)
+pclk_inf[i, ]$dev = cv_out$cvm[index]
+
+# getting the error rate using lambda.min
+pclk_prob = predict(cv_out, xnew = x[test,], s = "lambda.min")
+pclk_pred = ifelse(pclk_prob >= 0.5, 1, 0)
+pclk_inf[i, ]$mis = paste(sum(y[test] != pclk_pred), "/", length(test), sep = "")
+
+# nonzero coefficients
+pclk_inf[i, ]$sig_coef = cv_out$nzero[cv_out$lambda == cv_out$lambda.min]
+
+# nonzero groups
+nonzcoef = which(cv_out$glmfit$beta[, index] != 0)
+nonzindex = group_num[nonzcoef]
+pclk_inf$sig_grp = length(unique(nonzindex))
+
+# confusion matrix
+pred = ifelse(pclk_pred == 0, "0", "1")
+act = ifelse(y[test] == 0, "0", "1")
+all = sort(union(act, pred))
+pred = factor(pred, levels = all)
+act = factor(act, levels = all)
+conf = table(pred, act)
+
+# false positive and true positive rates
+pclk_inf[i, ]$fpr = paste(conf[2, 1], "/", (conf[1, 1] + conf[2, 1]), sep = "")
+pclk_inf[i, ]$tpr = paste(conf[2, 2], "/", (conf[1, 2] + conf[2, 2]), sep = "")
+
+# AUC
+pclk_ROC = roc(response = act, predictor = as.vector(pclk_prob), 
+                plot = FALSE, smooth = FALSE)
+pclk_inf[i, ]$auc = pclk_ROC$auc
+
+}
+
+rownames(pclk_inf) = paste("leuk_pcl_k_mod", 1:la, sep = "")
+
+#pclk_inf
+
+pclk_best = pclk_inf[which.min(pclk_inf$dev), ]
+pclk_best
+```
+
+### Hierarchical clustering
+
+```{r pcLasso hclust, message = FALSE}
+rat = c(0.95, 0.9, 0.75, 0.5, 0.25, 0.1); la = length(rat)
+pclh_inf = data.frame(lam = rep(NA, la), par = rep(NA, la), dev = rep(NA, la), 
+                     mis = rep(NA, la), sig_coef = rep(NA, la), sig_grp = rep(NA, la),
+                     fpr = rep(NA, la), tpr = rep(NA, la), auc = rep(NA, la))
+
+group_num = groupsh
+group_dat = data.frame(x = seq(1, (ncol(data) - 1), 1), y = group_num)
+groups = list()
+for(i in 1:tail(sort(unique(group_num)), 1)){
+  groups[[i]] = group_dat[group_dat$y == i, 1]
+}
+
+x = as.matrix(data[, -ncol(data)])
+y = data$yn
+
+for(i in 1:la){
+
+set.seed(1)
+cv_out = cv.pcLasso(x[train, ], y[train], groups = groups, ratio = rat[i], 
+                    family = "binomial")
+pclh_inf[i, ]$lam = cv_out$lambda.min
+
+pclh_inf[i, ]$par = rat[i]
+
+# deviance
+index = which(cv_out$lambda == cv_out$lambda.min)
+pclh_inf[i, ]$dev = cv_out$cvm[index]
+
+# getting the error rate using lambda.min
+pclh_prob = predict(cv_out, xnew = x[test,], s = "lambda.min")
+pclh_pred = ifelse(pclh_prob >= 0.5, 1, 0)
+pclh_inf[i, ]$mis = paste(sum(y[test] != pclh_pred), "/", length(test), sep = "")
+
+# nonzero coefficients
+pclh_inf[i, ]$sig_coef = cv_out$nzero[cv_out$lambda == cv_out$lambda.min]
+
+# nonzero groups
+nonzcoef = which(cv_out$glmfit$beta[, index] != 0)
+nonzindex = group_num[nonzcoef]
+pclh_inf$sig_grp = length(unique(nonzindex))
+
+# confusion matrix
+pred = ifelse(pclh_pred == 0, "0", "1")
+act = ifelse(y[test] == 0, "0", "1")
+all = sort(union(act, pred))
+pred = factor(pred, levels = all)
+act = factor(act, levels = all)
+conf = table(pred, act)
+
+# false positive and true positive rates
+pclh_inf[i, ]$fpr = paste(conf[2, 1], "/", (conf[1, 1] + conf[2, 1]), sep = "")
+pclh_inf[i, ]$tpr = paste(conf[2, 2], "/", (conf[1, 2] + conf[2, 2]), sep = "")
+
+# AUC
+pclh_ROC = roc(response = act, predictor = as.vector(pclh_prob), 
+                plot = FALSE, smooth = FALSE)
+pclh_inf[i, ]$auc = pclh_ROC$auc
+
+}
+
+rownames(pclh_inf) = paste("leuk_pcl_h_mod", 1:la, sep = "")
+
+pclh_inf
+
+pclh_best = pclh_inf[which.min(pclh_inf$dev), ]
+pclh_best
+```
+
+# Putting everything into one data frame
+
+```{r the data frame}
+#setwd("C:/Users/akenn/Desktop/Code/R_Code/LU_REU/Code") # for laptop
+setwd("C:/Users/reu_akenny/Desktop/LU_REU/Code") # for LAMAR computer
+
+# results for all of the models
+leuk_results = rbind(lasso_inf, enet_inf, pcl_inf, 
+                      glask_inf, sglk_inf, 
+                      cmcpk_inf, pclk_inf, 
+                      glash_inf, sglh_inf, 
+                      cmcph_inf, pclh_inf)
+write.csv(leuk_results, file = "leuk_results.csv")
+
+# results for the best models
+leuk_best = rbind(lasso_inf, enet_best, pcl_best, 
+                   glask_inf, sglk_best, 
+                   cmcpk_best, pclk_best, 
+                   glash_inf, sglh_best, 
+                   cmcph_best, pclh_best)
+write.csv(leuk_best, file = "leuk_best.csv")
+
+# one thing to note is that if you were to look at these in excel, some cells will be
+# converted to dates like mis, fpr, and tpr, but reading it into R is no big deal
+```
+
+# Making table with xtable
+
+```{r LaTeX table}
+#lt = read.csv("leuk_best.csv", header = TRUE)
+#lt = lt[, -1]
+#colnames(lt) = c("Parameters", "", "Deviance", "Misclass.", "Sig. Coef.", 
+#                 "Sig. Groups", "FPR", "TPR", "AUC")
+
+#lt[, c(1, 3, 9)] = signif(lt[, c(1, 3, 9)], digits = 3)
+
+#tab = xtable(t(lt))
+#align(tab) = "lccccccccccc"
+
+#print(tab, NA.string = "--", include.colnames = FALSE)
+```
+
